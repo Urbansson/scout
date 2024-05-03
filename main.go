@@ -8,7 +8,7 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/bwmarrin/discordgo" // Assuming you install the discordgo library
+	"github.com/bwmarrin/discordgo"
 )
 
 var ipProviders = []string{
@@ -35,11 +35,11 @@ func main() {
 		log.Fatal("missing flag --token")
 	}
 
-	dg, err := discordgo.New("Bot " + *BotToken) // Assuming the token starts with "Bot "
+	dg, err := discordgo.New("Bot " + *BotToken)
 	if err != nil {
 		log.Fatal("Error creating Discord session:", err)
 	}
-	defer dg.Close() // Ensure proper session closure
+	defer dg.Close()
 
 	dg.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
 		log.Printf("Logged in as: %v#%v", s.State.User.Username, s.State.User.Discriminator)
