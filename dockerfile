@@ -16,6 +16,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o scout .
 # Runner stage - use distroless
 FROM gcr.io/distroless/static-debian12:nonroot
 
+# OCI labels
+LABEL org.opencontainers.image.description="Discord bot that retrieves and reports the server's public IP address"
+
 # Copy binary from builder
 COPY --from=builder /app/scout /scout
 
