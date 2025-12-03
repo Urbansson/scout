@@ -1,14 +1,26 @@
-FROM golang:1.24
+# Builder stage
+FROM golang:1.24 AS builder
 
 WORKDIR /app
 
+# Copy dependency files
 COPY go.mod go.sum ./
 RUN go mod download
 
+# Copy source code
 COPY *.go ./
 
-# Build
-RUN CGO_ENABLED=0 GOOS=linux go build -o /scout
+# Build static binary
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o scout .
+
+# Runner stage - use distroless
+FROM gcr.io/distroless/static-debian12:nonroot
+
+# Copy binary from builder
+COPY --from=builder /app/scout /scout
+
+# Use non-root user
+USER nonroot:nonroot
 
 # Run
 ENTRYPOINT ["/scout"]
