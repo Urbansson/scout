@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,6 +18,7 @@ var ipProviders = []string{
 
 var (
 	BotToken = flag.String("token", "", "Bot access token")
+	logger   *slog.Logger
 )
 
 var (
@@ -31,64 +32,145 @@ var (
 
 func main() {
 	flag.Parse()
+
+	// Initialize structured logger
+	logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+
+	logger.Info("Starting Scout Discord bot")
+
 	if BotToken == nil || *BotToken == "" {
-		log.Fatal("missing flag --token")
+		logger.Error("missing flag --token")
+		os.Exit(1)
 	}
+	logger.Info("Bot token provided, creating Discord session")
 
 	dg, err := discordgo.New("Bot " + *BotToken)
 	if err != nil {
-		log.Fatal("Error creating Discord session:", err)
+		logger.Error("Error creating Discord session", "error", err)
+		os.Exit(1)
 	}
 	defer dg.Close()
+	logger.Info("Discord session created successfully")
 
 	dg.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
-		log.Printf("Logged in as: %v#%v", s.State.User.Username, s.State.User.Discriminator)
-
+		logger.Info("Bot logged in",
+			"username", s.State.User.Username,
+			"discriminator", s.State.User.Discriminator)
 	})
 
 	dg.AddHandler(func(s *discordgo.Session, gc *discordgo.GuildCreate) {
-		dg.ApplicationCommandCreate(dg.State.User.ID, gc.ID, &command)
-	})
-
-	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-		if i.ApplicationCommandData().Name == "get-ip" {
-			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Content: getCurrentIP(),
-				},
-			})
+		logger.Info("Joined guild",
+			"guild_name", gc.Guild.Name,
+			"guild_id", gc.Guild.ID)
+		logger.Info("Registering command",
+			"command", command.Name,
+			"guild", gc.Guild.Name)
+		_, err := dg.ApplicationCommandCreate(dg.State.User.ID, gc.ID, &command)
+		if err != nil {
+			logger.Error("Error registering command",
+				"guild", gc.Guild.Name,
+				"error", err)
+		} else {
+			logger.Info("Successfully registered command",
+				"command", command.Name,
+				"guild", gc.Guild.Name)
 		}
 	})
 
+	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		commandName := i.ApplicationCommandData().Name
+		logger.Info("Received interaction",
+			"command", commandName,
+			"user", i.Member.User.Username,
+			"discriminator", i.Member.User.Discriminator)
+
+		if commandName == "get-ip" {
+			logger.Info("Fetching current IP address")
+			ip := getCurrentIP()
+
+			if ip == "" {
+				logger.Warn("Failed to retrieve IP address")
+				ip = "Failed to retrieve IP address. Check logs for details."
+			} else {
+				logger.Info("Successfully retrieved IP", "ip", ip)
+			}
+
+			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: ip,
+				},
+			})
+			if err != nil {
+				logger.Error("Error responding to interaction", "error", err)
+			} else {
+				logger.Info("Successfully sent response to user")
+			}
+		} else {
+			logger.Warn("Unknown command received", "command", commandName)
+		}
+	})
+
+	logger.Info("Opening Discord connection")
 	err = dg.Open()
 	if err != nil {
-		log.Fatal("Error opening Discord connection:", err)
+		logger.Error("Error opening Discord connection", "error", err)
+		os.Exit(1)
 	}
+	logger.Info("Discord connection opened successfully")
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt)
-	log.Println("Press Ctrl+C to exit")
+	logger.Info("Bot is now running. Press Ctrl+C to exit")
 	<-stop
+	logger.Info("Received shutdown signal, closing bot")
 }
 
 func getCurrentIP() string {
-	for _, provider := range ipProviders {
+	logger.Info("Attempting to retrieve IP", "provider_count", len(ipProviders))
+
+	for i, provider := range ipProviders {
+		logger.Info("Trying provider",
+			"index", i+1,
+			"total", len(ipProviders),
+			"provider", provider)
+
 		resp, err := http.Get(provider)
 		if err != nil {
-			log.Printf("Error getting IP from %s: %v\n", provider, err)
+			logger.Error("Error getting IP from provider",
+				"provider", provider,
+				"error", err)
 			continue
 		}
 		defer resp.Body.Close()
 
+		logger.Info("Response received",
+			"provider", provider,
+			"status_code", resp.StatusCode,
+			"status", http.StatusText(resp.StatusCode))
+
 		if resp.StatusCode == http.StatusOK {
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
-				log.Printf("Error reading response body from %s: %v\n", provider, err)
+				logger.Error("Error reading response body",
+					"provider", provider,
+					"error", err)
 				continue
 			}
-			return string(body)
+			ip := string(body)
+			logger.Info("Successfully retrieved IP",
+				"provider", provider,
+				"ip", ip)
+			return ip
+		} else {
+			logger.Warn("Non-OK status code",
+				"provider", provider,
+				"status_code", resp.StatusCode)
 		}
 	}
+
+	logger.Error("All IP providers failed")
 	return ""
 }
