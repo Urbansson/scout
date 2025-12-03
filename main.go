@@ -4,9 +4,12 @@ import (
 	"flag"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -19,6 +22,10 @@ var ipProviders = []string{
 var (
 	BotToken = flag.String("token", "", "Bot access token")
 	logger   *slog.Logger
+	// Custom HTTP client with timeout and User-Agent
+	httpClient = &http.Client{
+		Timeout: 10 * time.Second,
+	}
 )
 
 var (
@@ -137,7 +144,17 @@ func getCurrentIP() string {
 			"total", len(ipProviders),
 			"provider", provider)
 
-		resp, err := http.Get(provider)
+		// Create request with custom User-Agent to get plain text response
+		req, err := http.NewRequest("GET", provider, nil)
+		if err != nil {
+			logger.Error("Error creating request",
+				"provider", provider,
+				"error", err)
+			continue
+		}
+		req.Header.Set("User-Agent", "curl/7.64.1")
+
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			logger.Error("Error getting IP from provider",
 				"provider", provider,
@@ -159,7 +176,17 @@ func getCurrentIP() string {
 					"error", err)
 				continue
 			}
-			ip := string(body)
+			// Trim whitespace and newlines from response
+			ip := strings.TrimSpace(string(body))
+
+			// Validate that response is a valid IP address
+			if parsedIP := net.ParseIP(ip); parsedIP == nil {
+				logger.Warn("Invalid IP address received",
+					"provider", provider,
+					"response", ip)
+				continue
+			}
+
 			logger.Info("Successfully retrieved IP",
 				"provider", provider,
 				"ip", ip)
